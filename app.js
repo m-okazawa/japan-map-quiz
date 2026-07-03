@@ -8,6 +8,17 @@ const rubyStyle = document.createElement('style');
 rubyStyle.innerHTML = "body.ruby-off rt { display: none !important; }";
 document.head.appendChild(rubyStyle);
 
+// Preload mascot images to prevent flickering on emotion changes
+const mascotImages = [
+  'images/mascot_happy.png',
+  'images/mascot_sad.png',
+  'images/mascot_success.png'
+];
+mascotImages.forEach(src => {
+  const img = new Image();
+  img.src = src;
+});
+
 // 47 Japanese Prefectures Complete Database for Children
 const PREFECTURES = {
   "1": { name: "北海道", kana: "ほっかいどう", capital: "札幌", capitalKana: "さっぽろ", region: "hokkaido-tohoku", info: "日本（にほん）で いちばん 広い（ひろい）ところだよ。おいしい じゃがいもや メロン、ソフトクリーム、カニや サケがたくさん とれるよ！" },
@@ -186,15 +197,38 @@ const SoundSynth = {
   }
 };
 
+// Helper to ensure voices are preloaded and cached for Web Speech API
+let voices = [];
+function loadVoices() {
+  if (typeof window !== 'undefined' && window.speechSynthesis) {
+    voices = window.speechSynthesis.getVoices();
+  }
+}
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  loadVoices();
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }
+}
+
 // Text-to-speech engine using Web Speech API
 const VoiceSpeech = {
   speak(text) {
     if (!state.isVoiceOn) return;
     
-    // Cancel currently spoken utterances first to avoid stacking
-    window.speechSynthesis.cancel();
+    // Prevent locking on cancel when not speaking
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
     
     const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Try to find a native Japanese voice for clear pronunciation
+    const jaVoice = window.speechSynthesis.getVoices().find(v => v.lang.includes('ja-JP'));
+    if (jaVoice) {
+      utterance.voice = jaVoice;
+    }
+    
     utterance.lang = 'ja-JP';
     utterance.rate = 1.1; // Friendly slightly faster rate
     utterance.pitch = 1.3; // Higher pitched, cute voice for kids
@@ -310,11 +344,13 @@ function initUIEvents() {
       delete state.learnedPrefectures[code];
       btnMarkLearned.classList.remove('checked');
       btnMarkLearned.querySelector('.checkbox').innerText = "⬜";
+      updateMascot('mascot-learn-hint', 'mascot-learn-text', 'happy', "もういちど おぼえなおそう！💪🐳");
     } else {
       state.learnedPrefectures[code] = true;
       btnMarkLearned.classList.add('checked');
       btnMarkLearned.querySelector('.checkbox').innerText = "✅";
       SoundSynth.playCorrect();
+      updateMascot('mascot-learn-hint', 'mascot-learn-text', 'success', "おぼえたね！すごい！たいへんよくできました！🎉🐳");
     }
     
     saveState();
@@ -363,13 +399,23 @@ function selectMode(mode) {
     document.querySelector('.info-content-state').style.display = 'none';
     state.selectedCode = null;
     applyRegionFiltering();
+    updateMascot('mascot-learn-empty', null, 'happy', null);
     VoiceSpeech.speak("ちず を クリック して、しらべて みよう！");
   } else if (mode === 'quiz-a') {
     document.getElementById('quiz-status-bar').classList.add('active');
+    updateMascot('mascot-status', null, 'happy', null);
     startQuiz();
   } else if (mode === 'quiz-b') {
     document.getElementById('quiz-status-bar').classList.add('active');
     document.getElementById('panel-quiz-choices').classList.add('active');
+    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の名前はなあに？下の4つからえらんでね！🐶");
+    startQuiz();
+  } else if (mode === 'quiz-c') {
+    document.getElementById('quiz-status-bar').classList.add('active');
+    document.getElementById('panel-quiz-choices').classList.add('active');
+    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？下の4つからえらんでね！🐳");
     startQuiz();
   }
 }
@@ -386,6 +432,9 @@ function goBackToMenu() {
     el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'dimmed', 'inspected');
   });
 
+  // Mascot reset
+  updateMascot('mascot-menu', null, 'happy', null);
+
   renderMainMenuStats();
 }
 
@@ -393,6 +442,9 @@ function goBackToMenu() {
 // Interactive SVG Map Configuration
 // -------------------------------------------------------------
 function initMapEvents() {
+  // Remove all <title> tags from the SVG map to prevent browser tooltips (spoiling quizzes)
+  document.querySelectorAll('#svg-map-container title').forEach(el => el.remove());
+
   const prefectures = document.querySelectorAll('.prefecture');
   
   prefectures.forEach((pref) => {
@@ -485,6 +537,9 @@ function inspectPrefecture(code) {
   const voiceName = pref.kana;
   const voiceFact = pref.info.replace(/（[^）]*）/g, ""); // Remove parenthesis clarifications for audio
   VoiceSpeech.speak(`${voiceName}。${voiceFact}`);
+
+  // Update learn mode mascot hint
+  updateMascot('mascot-learn-hint', 'mascot-learn-text', 'happy', `「${pref.kana}」についておぼえよう！おぼえたらボタンをおしてね！🐳`);
 }
 
 // Helper to return Furigana Markup
@@ -610,7 +665,7 @@ function getRubyHtml(text, forcedKana = null) {
     "カニ": "かに",
     "フグ": "ふぐ",
     "貝": "かい",
-    "イヌ": "いぬ"
+    "シャチ": "しゃち"
   };
 
   // Sort keys in descending order of length to prevent nested substring replacement bugs
@@ -631,6 +686,24 @@ function getRubyHtml(text, forcedKana = null) {
   });
 
   return result;
+}
+
+// Helper to update mascot image and bubble text
+function updateMascot(mascotId, bubbleId, emotion, text) {
+  const mascotEl = document.getElementById(mascotId);
+  const bubbleEl = document.getElementById(bubbleId);
+  if (mascotEl) {
+    if (emotion === 'happy') {
+      mascotEl.src = 'images/mascot_happy.png';
+    } else if (emotion === 'success') {
+      mascotEl.src = 'images/mascot_success.png';
+    } else if (emotion === 'sad') {
+      mascotEl.src = 'images/mascot_sad.png';
+    }
+  }
+  if (bubbleEl && text) {
+    bubbleEl.innerHTML = text;
+  }
 }
 
 // -------------------------------------------------------------
@@ -698,6 +771,9 @@ function nextQuizQuestion() {
     const textHtml = `「${getRubyHtml(targetPref.name, targetPref.kana)}」は どこかな？地図の上を タップ してね！`;
     document.getElementById('quiz-question-text').innerHTML = textHtml;
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'happy', null);
+    
     // Voice prompt
     VoiceSpeech.speak(`${targetPref.kana}はどこかな？クリックしてね！`);
   } 
@@ -715,8 +791,33 @@ function nextQuizQuestion() {
     generateChoices();
     renderChoices();
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の名前はなあに？<br>下の4つからえらんでね！🐳");
+    
     // Voice prompt
     VoiceSpeech.speak("光っている県はなんという名前かな？選んでね！");
+  }
+  else if (state.mode === 'quiz-c') {
+    // Mode C: Select 4 multiple choices for capital city
+    const textHtml = "光っている県（けん）の 県庁所在地（けんちょうしょざいち）は なあに？";
+    document.getElementById('quiz-question-text').innerHTML = textHtml;
+
+    // Highlight target on map
+    const targetEl = document.querySelector(`.prefecture[data-code="${state.quizCurrentTarget}"]`);
+    if (targetEl) {
+      targetEl.classList.add('quiz-target');
+    }
+
+    generateChoices();
+    renderChoices();
+    
+    // Mascot update
+    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？<br>下の4つからえらんでね！🐳");
+    
+    // Voice prompt
+    VoiceSpeech.speak("光っている県の県庁所在地はなんという名前かな？選んでね！");
   }
 }
 
@@ -737,7 +838,7 @@ function generateChoices() {
   // Shuffle pool and slice 3
   for (let i = regionPool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [regionPool[i], regionPool[j]] = [regionPool[j], regionPool[i]);
+    [regionPool[i], regionPool[j]] = [regionPool[j], regionPool[i]];
   }
   
   const dummies = regionPool.slice(0, 3);
@@ -761,7 +862,11 @@ function renderChoices() {
     
     const code = state.quizChoices[index];
     const pref = PREFECTURES[code];
-    btn.innerHTML = getRubyHtml(pref.name, pref.kana);
+    if (state.mode === 'quiz-c') {
+      btn.innerHTML = getRubyHtml(pref.capital, pref.capitalKana);
+    } else {
+      btn.innerHTML = getRubyHtml(pref.name, pref.kana);
+    }
   });
 }
 
@@ -779,6 +884,9 @@ function submitQuizAClick(clickedCode) {
     SoundSynth.playCorrect();
     state.quizCorrectCount++;
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'success', null);
+
     if (targetEl) {
       targetEl.classList.add('correct-blink');
     }
@@ -791,6 +899,9 @@ function submitQuizAClick(clickedCode) {
     // WRONG!
     SoundSynth.playWrong();
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'sad', null);
+
     if (targetEl) {
       targetEl.classList.add('wrong-blink');
       setTimeout(() => {
@@ -805,10 +916,11 @@ function submitQuizAClick(clickedCode) {
   }
 }
 
-// Mode B Multiple Choice Judgement
+// Mode B/C Multiple Choice Judgement
 function submitChoice(choiceIndex) {
   const selectedCode = state.quizChoices[choiceIndex];
   const targetCode = state.quizCurrentTarget;
+  const targetPref = PREFECTURES[targetCode];
   
   const buttons = document.querySelectorAll('.choice-btn');
   buttons.forEach(btn => btn.disabled = true); // Disable after clicking
@@ -818,6 +930,16 @@ function submitChoice(choiceIndex) {
     SoundSynth.playCorrect();
     state.quizCorrectCount++;
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'success', null);
+    if (state.mode === 'quiz-c') {
+      updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'success', `せいかい！${targetPref.name}の県庁所在地は「${targetPref.capital}」だよ！🎉`);
+      VoiceSpeech.speak(`せいかい！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`);
+    } else {
+      updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'success', "せいかい！やったね！大正解（だいせいかい）だよ！🎉");
+      VoiceSpeech.speak("せいかい！やったね！");
+    }
+
     buttons[choiceIndex].classList.add('correct');
     
     const targetEl = document.querySelector(`.prefecture[data-code="${targetCode}"]`);
@@ -829,11 +951,21 @@ function submitChoice(choiceIndex) {
     setTimeout(() => {
       state.quizCurrentIndex++;
       nextQuizQuestion();
-    }, 900);
+    }, 1500);
   } else {
     // WRONG!
     SoundSynth.playWrong();
     
+    // Mascot update
+    updateMascot('mascot-status', null, 'sad', null);
+    if (state.mode === 'quiz-c') {
+      updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'sad', `ざんねん！正解（せいかい）は「${targetPref.capital}」だよ。どんまい！🐳`);
+      VoiceSpeech.speak(`ざんねん！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`);
+    } else {
+      updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'sad', `ざんねん！正解（せいかい）は「${targetPref.name}」だよ。どんまい！🐳`);
+      VoiceSpeech.speak(`ざんねん！正解は${targetPref.kana}だよ！`);
+    }
+
     buttons[choiceIndex].classList.add('wrong');
     // Highlight correct button so child learns
     const correctIndex = state.quizChoices.indexOf(targetCode);
@@ -848,7 +980,7 @@ function submitChoice(choiceIndex) {
     setTimeout(() => {
       state.quizCurrentIndex++;
       nextQuizQuestion();
-    }, 1500);
+    }, 2000);
   }
 }
 
@@ -908,6 +1040,26 @@ function finishQuiz() {
   document.getElementById('quiz-result-title').innerHTML = getRubyHtml(title);
   document.getElementById('quiz-result-message').innerHTML = getRubyHtml(message);
 
+  // Mascot finish quiz update
+  let mascotText = "おつかれさま！がんばったね！🐳✨";
+  let mascotEmotion = 'happy';
+  
+  if (state.quizCorrectCount === state.quizQueue.length) {
+    mascotText = "パーフェクト！すごい！キミは完ぺきなちずマスターだ！👑🐳✨";
+    mascotEmotion = 'success';
+  } else if (successRatio >= 0.8) {
+    mascotText = "あとすこしでパーフェクト！とってもおしかったね！つぎもがんばろう！🐳✨";
+    mascotEmotion = 'success';
+  } else if (successRatio >= 0.5) {
+    mascotText = "半分（はんぶん）せいかい！がんばったね！なんどもあそんでおぼえよう！🐳👍";
+    mascotEmotion = 'happy';
+  } else {
+    mascotText = "どんまい！ぼくと いっしょに すこしずつ おぼえていこうね！🐳🌊";
+    mascotEmotion = 'sad';
+  }
+
+  updateMascot('mascot-result', 'mascot-result-text', mascotEmotion, mascotText);
+
   // Render Gold Reward Stamp clear animation if perfect score achieved
   const rewardEl = document.getElementById('quiz-medal-reward');
   if (showMedal) {
@@ -945,7 +1097,8 @@ function renderMainMenuStats() {
   // Find overall highest score across any national quizzes
   const scoreQuizA = state.highScores['quiz-a-all'] || 0;
   const scoreQuizB = state.highScores['quiz-b-all'] || 0;
-  const maxScore = Math.max(scoreQuizA, scoreQuizB);
+  const scoreQuizC = state.highScores['quiz-c-all'] || 0;
+  const maxScore = Math.max(scoreQuizA, scoreQuizB, scoreQuizC);
   document.getElementById('stat-high-score').innerText = `${maxScore} / 47`;
 
   // Render clear medal stamps cabinet
@@ -1058,3 +1211,5 @@ function triggerConfetti() {
 
   animate();
 }
+
+
