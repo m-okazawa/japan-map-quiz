@@ -211,25 +211,39 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   }
 }
 
-// Pick the cutest available Japanese voice (prefer female / child-friendly voices)
+// Male Japanese voices we never want to pitch up (sounds unnatural / scary)
+const MALE_VOICE_RE = /male|男性|otoya|ichiro|hattori|daichi|keita|naoki/i;
+
+// Pick a gentle, cute-sounding female Japanese voice
 function pickCuteJapaneseVoice() {
   const all = window.speechSynthesis.getVoices();
-  const ja = all.filter(v => v.lang && (v.lang.includes('ja-JP') || v.lang.toLowerCase().startsWith('ja')));
+  let ja = all.filter(v => v.lang && (v.lang.includes('ja-JP') || v.lang.toLowerCase().startsWith('ja')));
   if (ja.length === 0) return null;
 
-  // Known female / cute Japanese voices across OSes & browsers
+  // Never use an obviously male voice
+  const nonMale = ja.filter(v => !MALE_VOICE_RE.test(v.name || ''));
+  if (nonMale.length) ja = nonMale;
+
+  // Best-quality, soft/cute female Japanese voices first (across OSes & browsers).
+  // Natural / online / enhanced voices sound far kinder than the old robotic ones.
   const preferredNames = [
-    'kyoko', 'o-ren', 'nanami', 'haruka', 'ayumi', 'sayaka', 'mizuki',
-    'google 日本語', 'google japanese', 'sakura', 'female', '女性'
+    'nanami',            // Microsoft Nanami (Edge, natural) – very soft & friendly
+    'kyoko',             // macOS/iOS female
+    'ayumi', 'haruka', 'sayaka', 'ichika', 'aoi', 'mayu', 'sakura',
+    'mizuki',            // Amazon Polly female
+    'google 日本語', 'google japanese',
+    'female', '女性'
   ];
   for (const name of preferredNames) {
-    const match = ja.find(v => v.name && v.name.toLowerCase().includes(name));
-    if (match) return match;
+    // Prefer a "natural"/"online"/"enhanced" variant of the matched voice if present
+    const matches = ja.filter(v => v.name && v.name.toLowerCase().includes(name));
+    if (matches.length) {
+      const nice = matches.find(v => /natural|online|enhanced|premium/i.test(v.name));
+      return nice || matches[0];
+    }
   }
 
-  // Otherwise avoid obviously male voices, fall back to the first Japanese voice
-  const notMale = ja.find(v => !/male|男性|otoya|ichiro|hattori/i.test(v.name));
-  return notMale || ja[0];
+  return ja[0];
 }
 
 // Text-to-speech engine using Web Speech API
@@ -254,9 +268,14 @@ const VoiceSpeech = {
       utterance.voice = jaVoice;
     }
 
+    // High-quality (neural / online) voices stay clear even when pitched up high,
+    // so we can push them to a cute, childlike pitch. Basic/robotic voices distort
+    // and sound "scary" if pitched too high, so we lift them only gently.
+    const isHqVoice = jaVoice && /natural|online|enhanced|premium|google|siri/i.test(jaVoice.name || '');
+
     utterance.lang = 'ja-JP';
-    utterance.rate = 1.0;  // Calm, easy-to-follow speed for kids
-    utterance.pitch = 1.7; // Higher pitched, extra cute voice for kids
+    utterance.rate = isHqVoice ? 1.0 : 0.95;  // light & lively, easy for kids to follow
+    utterance.pitch = isHqVoice ? 1.55 : 1.35; // childlike & cute, without distortion
 
     if (onEnd) {
       // Fire on natural end OR on error so the quiz never stalls
