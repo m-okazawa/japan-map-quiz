@@ -665,15 +665,47 @@ rt {
   opacity: 1 !important;
 }
 
-/* Shake animation for wrong selection */
+/* Flash animation for wrong selection.
+   NOTE: each prefecture <g> is positioned via its SVG `transform="translate(...)"`
+   attribute. A CSS `transform` (e.g. a translateX shake) would OVERRIDE that
+   attribute and make the prefecture jump to the top-left corner ("映り込み" bug),
+   so we animate `filter` only — never `transform` — on prefecture groups. */
 .prefecture.wrong-blink {
-  animation: shake 0.3s ease-in-out;
+  animation: wrong-flash 0.4s ease-in-out;
 }
 
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4px) rotate(-1deg); }
-  75% { transform: translateX(4px) rotate(1deg); }
+@keyframes wrong-flash {
+  0%, 100% { filter: brightness(1); }
+  30% { filter: brightness(1.5) saturate(1.4); }
+  60% { filter: brightness(0.9); }
+}
+
+/* Region Hint: outline & glow the whole region the answer belongs to,
+   shown after a wrong guess in the "Where is it?" quiz. Only `filter` and
+   `stroke` are animated (never `transform`) to keep SVG positioning intact. */
+.prefecture.region-hint polygon,
+.prefecture.region-hint path {
+  opacity: 1 !important;
+  stroke: #ff9800 !important;
+  stroke-width: 2.6px !important;
+  animation: region-hint-pulse 1s infinite alternate ease-in-out;
+}
+
+@keyframes region-hint-pulse {
+  from { filter: brightness(1.05) drop-shadow(0 0 2px rgba(255, 152, 0, 0.6)); }
+  to { filter: brightness(1.2) drop-shadow(0 0 8px rgba(255, 152, 0, 1)); }
+}
+
+/* Text hint line shown inside the quiz question box */
+.quiz-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #e67e22;
+}
+.quiz-hint b {
+  color: #d35400;
 }
 
 /* Filter Dimming: De-emphasize other regions */

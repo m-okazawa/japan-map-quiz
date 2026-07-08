@@ -211,31 +211,92 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   }
 }
 
+// Pick the cutest available Japanese voice (prefer female / child-friendly voices)
+function pickCuteJapaneseVoice() {
+  const all = window.speechSynthesis.getVoices();
+  const ja = all.filter(v => v.lang && (v.lang.includes('ja-JP') || v.lang.toLowerCase().startsWith('ja')));
+  if (ja.length === 0) return null;
+
+  // Known female / cute Japanese voices across OSes & browsers
+  const preferredNames = [
+    'kyoko', 'o-ren', 'nanami', 'haruka', 'ayumi', 'sayaka', 'mizuki',
+    'google 日本語', 'google japanese', 'sakura', 'female', '女性'
+  ];
+  for (const name of preferredNames) {
+    const match = ja.find(v => v.name && v.name.toLowerCase().includes(name));
+    if (match) return match;
+  }
+
+  // Otherwise avoid obviously male voices, fall back to the first Japanese voice
+  const notMale = ja.find(v => !/male|男性|otoya|ichiro|hattori/i.test(v.name));
+  return notMale || ja[0];
+}
+
 // Text-to-speech engine using Web Speech API
 const VoiceSpeech = {
-  speak(text) {
-    if (!state.isVoiceOn) return;
-    
+  speak(text, onEnd = null) {
+    if (!state.isVoiceOn) {
+      // Voice is off: still fire the callback so quiz flow can proceed
+      if (onEnd) onEnd();
+      return;
+    }
+
     // Prevent locking on cancel when not speaking
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
     }
-    
+
     const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Try to find a native Japanese voice for clear pronunciation
-    const jaVoice = window.speechSynthesis.getVoices().find(v => v.lang.includes('ja-JP'));
+
+    // Try to find a cute Japanese voice for clear, friendly pronunciation
+    const jaVoice = pickCuteJapaneseVoice();
     if (jaVoice) {
       utterance.voice = jaVoice;
     }
-    
+
     utterance.lang = 'ja-JP';
-    utterance.rate = 1.1; // Friendly slightly faster rate
-    utterance.pitch = 1.3; // Higher pitched, cute voice for kids
-    
+    utterance.rate = 1.0;  // Calm, easy-to-follow speed for kids
+    utterance.pitch = 1.7; // Higher pitched, extra cute voice for kids
+
+    if (onEnd) {
+      // Fire on natural end OR on error so the quiz never stalls
+      utterance.onend = onEnd;
+      utterance.onerror = onEnd;
+    }
+
     window.speechSynthesis.speak(utterance);
   }
 };
+
+// Advance to the next quiz question only AFTER the answer has finished being
+// spoken (plus a short pause), so the read-out is never cut off mid-sentence.
+// Falls back to a fixed minimum delay when voice is off.
+function speakThenAdvance(feedbackText, minVisualMs) {
+  const minDelay = minVisualMs || 900;
+  let done = false;
+  const advance = () => {
+    if (done) return;
+    done = true;
+    state.quizCurrentIndex++;
+    nextQuizQuestion();
+  };
+
+  if (!state.isVoiceOn) {
+    setTimeout(advance, minDelay);
+    return;
+  }
+
+  const started = Date.now();
+  const trailingPauseMs = 450; // small breath after the answer before next question
+  VoiceSpeech.speak(feedbackText, () => {
+    const elapsed = Date.now() - started;
+    const wait = Math.max(trailingPauseMs, minDelay - elapsed);
+    setTimeout(advance, wait);
+  });
+
+  // Safety net: never stall the quiz if the speech 'end' event never fires
+  setTimeout(advance, 12000);
+}
 
 // -------------------------------------------------------------
 // App Initialization & Event Listeners
@@ -390,7 +451,7 @@ function selectMode(mode) {
   document.getElementById('quiz-status-bar').classList.remove('active');
 
   // Reset inspected class of prefectures
-  document.querySelectorAll('.prefecture').forEach(el => el.classList.remove('inspected'));
+  document.querySelectorAll('.prefecture').forEach(el => el.classList.remove('inspected', 'region-hint'));
 
   if (mode === 'learn') {
     document.getElementById('panel-info').classList.add('active');
@@ -429,7 +490,7 @@ function goBackToMenu() {
   
   // Clean up any flashing target map animations
   document.querySelectorAll('.prefecture').forEach(el => {
-    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'dimmed', 'inspected');
+    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'dimmed', 'inspected', 'region-hint');
   });
 
   // Mascot reset
@@ -670,19 +731,30 @@ function getRubyHtml(text, forcedKana = null) {
 
   // Sort keys in descending order of length to prevent nested substring replacement bugs
   const sortedKeys = Object.keys(furiganaMap).sort((a,b) => b.length - a.length);
-  
+
+  // Escape any RegExp metacharacters that might appear in a key
+  const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   let result = text;
+  const replacements = [];
+
+  // First pass: swap each matched word for an index-based sentinel token.
+  // The token contains NO Japanese (only  delimiters + a number), so a
+  // later/shorter key can never match inside it — this prevents the old
+  // "##RUBY_" placeholders from leaking into the visible text.
   sortedKeys.forEach((kanji) => {
     const kana = furiganaMap[kanji];
-    const regex = new RegExp(kanji, 'g');
-    // Replace with temporary unique placeholder so we don't double-replace already converted nodes
-    result = result.replace(regex, `##RUBY_${kanji}##`);
+    const regex = new RegExp(escapeRegExp(kanji), 'g');
+    result = result.replace(regex, () => {
+      const token = `${replacements.length}`;
+      replacements.push(`<ruby>${kanji}<rt>${kana}</rt></ruby>`);
+      return token;
+    });
   });
 
-  // Turn placeholders into ruby tags
-  sortedKeys.forEach((kanji) => {
-    const kana = furiganaMap[kanji];
-    result = result.replace(new RegExp(`##RUBY_${kanji}##`, 'g'), `<ruby>${kanji}<rt>${kana}</rt></ruby>`);
+  // Second pass: turn the sentinel tokens back into ruby markup
+  replacements.forEach((html, i) => {
+    result = result.split(`${i}`).join(html);
   });
 
   return result;
@@ -736,7 +808,7 @@ function startQuiz() {
 
   // De-highlight map
   document.querySelectorAll('.prefecture').forEach(el => {
-    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'dimmed', 'inspected');
+    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'dimmed', 'inspected', 'region-hint');
   });
 
   // Apply dimmed filter to non-participating prefectures
@@ -756,7 +828,7 @@ function nextQuizQuestion() {
 
   // Reset animations on map path groups
   document.querySelectorAll('.prefecture').forEach(el => {
-    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink');
+    el.classList.remove('quiz-target', 'correct-blink', 'wrong-blink', 'region-hint');
   });
 
   // Update Status Bar info
@@ -883,22 +955,24 @@ function submitQuizAClick(clickedCode) {
     // CORRECT!
     SoundSynth.playCorrect();
     state.quizCorrectCount++;
-    
+
     // Mascot update
     updateMascot('mascot-status', null, 'success', null);
+
+    // Clear any region hint that was shown after a previous wrong guess
+    clearRegionHint();
 
     if (targetEl) {
       targetEl.classList.add('correct-blink');
     }
 
-    setTimeout(() => {
-      state.quizCurrentIndex++;
-      nextQuizQuestion();
-    }, 900);
+    // Announce the answer, then move on only once it has finished speaking
+    const targetPref = PREFECTURES[targetCode];
+    speakThenAdvance(`せいかい！ここが${targetPref.kana}だよ！`, 900);
   } else {
     // WRONG!
     SoundSynth.playWrong();
-    
+
     // Mascot update
     updateMascot('mascot-status', null, 'sad', null);
 
@@ -908,12 +982,42 @@ function submitQuizAClick(clickedCode) {
         targetEl.classList.remove('wrong-blink');
       }, 500);
     }
-    
-    // Give a friendly spoken voice hint about where it is
+
+    // Tell the child which prefecture they actually clicked, then give a hint
     const targetPref = PREFECTURES[targetCode];
+    const clickedPref = PREFECTURES[clickedCode];
     const hintRegion = REGIONS[targetPref.region];
-    VoiceSpeech.speak(`ちがうよ！ ${targetPref.kana} は、${hintRegion}地方にあるよ！`);
+
+    // Visual hint: outline & glow the whole region the answer belongs to
+    highlightRegionHint(targetPref.region);
+
+    // Also show the region hint in the question text for kids who can read
+    const questionEl = document.getElementById('quiz-question-text');
+    questionEl.innerHTML = `「${getRubyHtml(targetPref.name, targetPref.kana)}」は どこかな？` +
+      `<br><span class="quiz-hint">💡 ヒント：<b>${hintRegion}</b>地方を さがしてね！</span>`;
+
+    VoiceSpeech.speak(`ちがうよ！そこは${clickedPref.kana}だよ。${targetPref.kana}は、${hintRegion}地方にあるよ！さがしてみてね！`);
   }
+}
+
+// Outline every prefecture in the given region as a visual hint on the map
+function highlightRegionHint(region) {
+  document.querySelectorAll('.prefecture').forEach(el => {
+    const code = el.getAttribute('data-code');
+    const pref = PREFECTURES[code];
+    if (pref && pref.region === region) {
+      el.classList.add('region-hint');
+    } else {
+      el.classList.remove('region-hint');
+    }
+  });
+}
+
+// Remove the region hint outline from the whole map
+function clearRegionHint() {
+  document.querySelectorAll('.prefecture.region-hint').forEach(el => {
+    el.classList.remove('region-hint');
+  });
 }
 
 // Mode B/C Multiple Choice Judgement
@@ -932,38 +1036,38 @@ function submitChoice(choiceIndex) {
     
     // Mascot update
     updateMascot('mascot-status', null, 'success', null);
+    let feedbackVoice;
     if (state.mode === 'quiz-c') {
       updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'success', `せいかい！${targetPref.name}の県庁所在地は「${targetPref.capital}」だよ！🎉`);
-      VoiceSpeech.speak(`せいかい！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`);
+      feedbackVoice = `せいかい！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`;
     } else {
       updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'success', "せいかい！やったね！大正解（だいせいかい）だよ！🎉");
-      VoiceSpeech.speak("せいかい！やったね！");
+      feedbackVoice = `せいかい！やったね！ここは${targetPref.kana}だよ！`;
     }
 
     buttons[choiceIndex].classList.add('correct');
-    
+
     const targetEl = document.querySelector(`.prefecture[data-code="${targetCode}"]`);
     if (targetEl) {
       targetEl.classList.remove('quiz-target');
       targetEl.classList.add('correct-blink');
     }
 
-    setTimeout(() => {
-      state.quizCurrentIndex++;
-      nextQuizQuestion();
-    }, 1500);
+    // Wait until the whole answer has been spoken before the next question
+    speakThenAdvance(feedbackVoice, 1200);
   } else {
     // WRONG!
     SoundSynth.playWrong();
     
     // Mascot update
     updateMascot('mascot-status', null, 'sad', null);
+    let feedbackVoice;
     if (state.mode === 'quiz-c') {
       updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'sad', `ざんねん！正解（せいかい）は「${targetPref.capital}」だよ。どんまい！🐳`);
-      VoiceSpeech.speak(`ざんねん！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`);
+      feedbackVoice = `ざんねん！${targetPref.kana}の県庁所在地は${targetPref.capitalKana}だよ！`;
     } else {
       updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'sad', `ざんねん！正解（せいかい）は「${targetPref.name}」だよ。どんまい！🐳`);
-      VoiceSpeech.speak(`ざんねん！正解は${targetPref.kana}だよ！`);
+      feedbackVoice = `ざんねん！正解は${targetPref.kana}だよ！`;
     }
 
     buttons[choiceIndex].classList.add('wrong');
@@ -977,10 +1081,8 @@ function submitChoice(choiceIndex) {
       targetEl.classList.add('wrong-blink');
     }
 
-    setTimeout(() => {
-      state.quizCurrentIndex++;
-      nextQuizQuestion();
-    }, 2000);
+    // Give the child time to hear the full answer before moving on
+    speakThenAdvance(feedbackVoice, 2200);
   }
 }
 
