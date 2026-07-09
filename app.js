@@ -194,8 +194,54 @@ const SoundSynth = {
       
       osc.start(time);
       osc.stop(time + note.d + 0.05);
-      
+
       time += note.d * 0.8;
+    });
+  },
+
+  // Playful, celebratory jingle for when a child marks a prefecture "おぼえた！"
+  playLearned() {
+    if (!state.isSoundOn) return;
+    this.init();
+
+    const now = this.ctx.currentTime;
+
+    // Bouncy rising major arpeggio (D-G-B-D) with a little hop
+    const notes = [
+      { f: 587.33,  t: 0.00, d: 0.13 }, // D5
+      { f: 783.99,  t: 0.09, d: 0.13 }, // G5
+      { f: 987.77,  t: 0.18, d: 0.13 }, // B5
+      { f: 1174.66, t: 0.27, d: 0.24 }  // D6 (held)
+    ];
+    notes.forEach((n) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(n.f, now + n.t);
+      gain.gain.setValueAtTime(0.0001, now + n.t);
+      gain.gain.exponentialRampToValueAtTime(0.22, now + n.t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + n.t + n.d);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now + n.t);
+      osc.stop(now + n.t + n.d + 0.05);
+    });
+
+    // Sparkle tail: a few quick twinkly high notes ✨
+    const sparkle = [1567.98, 2093.00, 2637.02]; // G6, C7, E7
+    sparkle.forEach((f, i) => {
+      const t = now + 0.42 + i * 0.06;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, t);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.13, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.15);
     });
   }
 };
@@ -459,7 +505,7 @@ function initUIEvents() {
       state.learnedPrefectures[code] = true;
       btnMarkLearned.classList.add('checked');
       btnMarkLearned.querySelector('.checkbox').innerText = "✅";
-      SoundSynth.playCorrect();
+      SoundSynth.playLearned();
       updateMascot('mascot-learn-hint', 'mascot-learn-text', 'success', "おぼえたね！すごい！たいへんよくできました！🎉🐳");
     }
     
