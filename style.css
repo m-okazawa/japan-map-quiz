@@ -21,7 +21,7 @@
   /* Region Colors */
   --color-hokkaido: #ff7ebb;
   --color-tohoku: #ffa5c9;
-  --color-kanto: #ffc83b;
+  --color-kanto: #5cc95c;  /* green: distinct from the gold quiz highlight & neighbours */
   --color-chubu: #2ec4b6;
   --color-kinki: #4895ef;
   --color-chugoku: #9d4edd;
@@ -632,20 +632,23 @@ rt {
   filter: brightness(1.15) drop-shadow(0 0 8px rgba(0,0,0,0.15));
 }
 
-/* Highlight flashing state for Quiz B target */
+/* Highlight state for the quiz target: fill the WHOLE prefecture with a bright,
+   glowing gold so it clearly "lights up" and is easy to spot. Gold (not green/red)
+   avoids confusion with the correct(green)/wrong(red) feedback colors. */
 .prefecture.quiz-target {
-  animation: pulse 0.8s infinite alternate ease-in-out;
+  animation: quiz-target-glow 0.8s infinite alternate ease-in-out;
 }
 .prefecture.quiz-target polygon,
 .prefecture.quiz-target path {
-  opacity: 1;
-  stroke: var(--primary-color) !important;
-  stroke-width: 3px !important;
+  fill: #ffd000 !important;       /* whole area turns bright gold */
+  stroke: #ffffff !important;     /* thick white outline separates it from neighbours */
+  stroke-width: 3.5px !important;
+  opacity: 1 !important;
 }
 
-@keyframes pulse {
-  0% { filter: brightness(1); }
-  100% { filter: brightness(1.4); }
+@keyframes quiz-target-glow {
+  from { filter: brightness(1)    drop-shadow(0 0 4px rgba(255, 149, 0, 0.85)); }
+  to   { filter: brightness(1.18) drop-shadow(0 0 14px rgba(255, 149, 0, 1)); }
 }
 
 /* Correct/Incorrect animation states */
