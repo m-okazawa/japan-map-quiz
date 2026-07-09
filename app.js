@@ -97,8 +97,11 @@ const state = {
   quizChoices: [],          // 4 codes for Quiz B choices
   
   // Persistence lists (LocalStorage)
-  learnedPrefectures: {},   // { "1": true, "24": true }
-  highScores: {}            // { "quiz-a-all": 47, "quiz-b-kanto": 7 }
+  inspectedPrefectures: {}, // { "1": true } — prefectures whose details have been viewed
+  learnedPrefectures: {},   // { "1": true, "24": true } — marked via the "おぼえた！" button
+  highScores: {},           // { "quiz-a-all": 47, "quiz-b-kanto": 7 } — used for medals
+  lastQuizCorrect: 0,       // correct answers in the most recently played quiz
+  lastQuizTotal: 0          // number of questions in that quiz
 };
 
 // Sound effects synthesizer using Web Audio API
@@ -323,6 +326,7 @@ function speakThenAdvance(feedbackText, minVisualMs) {
 document.addEventListener('DOMContentLoaded', () => {
   loadSavedState();
   initMapEvents();
+  computeRegionBBoxes();
   initUIEvents();
   renderMainMenuStats();
   
@@ -334,6 +338,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Load state from local storage
 function loadSavedState() {
+  const savedInspected = localStorage.getItem('inspected_prefectures');
+  if (savedInspected) {
+    state.inspectedPrefectures = JSON.parse(savedInspected);
+  }
+
   const savedLearned = localStorage.getItem('learned_prefectures');
   if (savedLearned) {
     state.learnedPrefectures = JSON.parse(savedLearned);
@@ -343,12 +352,33 @@ function loadSavedState() {
   if (savedScores) {
     state.highScores = JSON.parse(savedScores);
   }
+
+  const savedLast = localStorage.getItem('prefectures_last_quiz');
+  if (savedLast) {
+    const last = JSON.parse(savedLast);
+    state.lastQuizCorrect = last.correct || 0;
+    state.lastQuizTotal = last.total || 0;
+  }
 }
 
 // Save state to local storage
 function saveState() {
+  localStorage.setItem('inspected_prefectures', JSON.stringify(state.inspectedPrefectures));
   localStorage.setItem('learned_prefectures', JSON.stringify(state.learnedPrefectures));
   localStorage.setItem('prefectures_high_scores', JSON.stringify(state.highScores));
+  localStorage.setItem('prefectures_last_quiz', JSON.stringify({
+    correct: state.lastQuizCorrect,
+    total: state.lastQuizTotal
+  }));
+}
+
+// Remember the result of the quiz the child just played (works even if they
+// stop partway) so the menu meter reflects their most recent attempt.
+function recordLastQuizResult() {
+  if (!state.quizQueue || state.quizQueue.length === 0) return;
+  state.lastQuizCorrect = state.quizCorrectCount;
+  state.lastQuizTotal = state.quizQueue.length;
+  saveState();
 }
 
 // -------------------------------------------------------------
@@ -501,8 +531,13 @@ function selectMode(mode) {
 }
 
 function goBackToMenu() {
+  // If we're leaving a quiz (even partway through), remember the score so far
+  if (state.mode === 'quiz-a' || state.mode === 'quiz-b' || state.mode === 'quiz-c') {
+    recordLastQuizResult();
+  }
+
   state.mode = 'menu';
-  
+
   // Switch visible screens
   document.getElementById('screen-game').classList.remove('active');
   document.getElementById('screen-mode').classList.add('active');
@@ -565,13 +600,126 @@ function applyRegionFiltering() {
   prefectures.forEach((el) => {
     const code = el.getAttribute('data-code');
     const prefInfo = PREFECTURES[code];
-    
+
     if (state.region === 'all' || prefInfo.region === state.region) {
       el.classList.remove('dimmed');
     } else {
       el.classList.add('dimmed');
     }
   });
+
+  // Zoom the map into the chosen region so it's big & easy to play (esp. on phones)
+  setMapViewBox(state.region);
+}
+
+// -------------------------------------------------------------
+// Map Zoom: focus the SVG viewBox on the selected region
+// -------------------------------------------------------------
+const FULL_VIEWBOX = '0 0 1000 1000';
+const REGION_BBOX = {}; // region -> {minX,minY,maxX,maxY} in viewBox coordinates
+
+// Precompute each region's bounding box (in the SVG's viewBox coordinate space)
+// using the map's known transforms, so we can zoom without any layout timing issues.
+// We frame each prefecture by its MAIN body (largest shape) only, so far-flung
+// islands (Kagoshima's Amami, Tokyo's Izu, …) don't blow the zoom frame wide open.
+function computeRegionBBoxes() {
+  const A = 1.028807, E = -47.544239, F = -28.806583; // .svg-map outer matrix
+  const PX = 6, PY = 18;                               // .prefectures group translate
+
+  const parseTransform = (s) => {
+    const mt = /matrix\(([^)]+)\)/.exec(s || '');
+    if (mt) return mt[1].trim().split(/[ ,]+/).map(Number);
+    const tr = /translate\(([-\d.]+)[ ,]+([-\d.]+)\)/.exec(s || '');
+    const tx = tr ? parseFloat(tr[1]) : 0, ty = tr ? parseFloat(tr[2]) : 0;
+    const sc = /scale\(([-\d.]+)\)/.exec(s || '');
+    const k = sc ? parseFloat(sc[1]) : 1;
+    return [k, 0, 0, k, tx, ty]; // [a,b,c,d,e,f]
+  };
+  const toViewBox = (x, y, t) => {
+    const gx = t[0] * x + t[2] * y + t[4];
+    const gy = t[1] * x + t[3] * y + t[5];
+    return [A * (gx + PX) + E, A * (gy + PY) + F];
+  };
+  const toPairs = (nums) => {
+    const p = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) p.push([parseFloat(nums[i]), parseFloat(nums[i + 1])]);
+    return p;
+  };
+  const polyArea = (pts) => {
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const j = (i + 1) % pts.length;
+      a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    return Math.abs(a) / 2;
+  };
+
+  document.querySelectorAll('.prefecture').forEach((el) => {
+    const code = el.getAttribute('data-code');
+    const pref = PREFECTURES[code];
+    if (!pref) return;
+    const t = parseTransform(el.getAttribute('transform'));
+
+    // Gather candidate shapes: each polygon + each path subpath (split on Z)
+    const shapes = [];
+    el.querySelectorAll('polygon').forEach(p => {
+      const pts = toPairs((p.getAttribute('points') || '').match(/-?\d+\.?\d*/g) || []);
+      if (pts.length >= 3) shapes.push(pts);
+    });
+    el.querySelectorAll('path').forEach(p => {
+      (p.getAttribute('d') || '').split(/[Zz]/).forEach(sub => {
+        const pts = toPairs(sub.match(/-?\d+\.?\d*/g) || []);
+        if (pts.length >= 3) shapes.push(pts);
+      });
+    });
+    if (!shapes.length) return;
+
+    // Keep only the largest shape (the prefecture's main body)
+    let big = shapes[0], bigArea = polyArea(shapes[0]);
+    for (const s of shapes) {
+      const a = polyArea(s);
+      if (a > bigArea) { bigArea = a; big = s; }
+    }
+
+    const box = REGION_BBOX[pref.region] ||
+      (REGION_BBOX[pref.region] = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    big.forEach(([x, y]) => {
+      const [X, Y] = toViewBox(x, y, t);
+      if (X < box.minX) box.minX = X;
+      if (Y < box.minY) box.minY = Y;
+      if (X > box.maxX) box.maxX = X;
+      if (Y > box.maxY) box.maxY = Y;
+    });
+  });
+}
+
+// Set the map's viewBox to frame the given region (or the whole country for 'all')
+function setMapViewBox(region) {
+  const svg = document.querySelector('.geolonia-svg-map');
+  if (!svg) return;
+
+  const box = REGION_BBOX[region];
+  if (region === 'all' || !box) {
+    svg.setAttribute('viewBox', FULL_VIEWBOX);
+    return;
+  }
+
+  const w = box.maxX - box.minX;
+  const h = box.maxY - box.minY;
+  const pad = Math.max(w, h) * 0.12 + 12; // breathing room around the region
+  // Use a square viewBox so the region is centered & fills the (square-ish) map area
+  const size = Math.max(w, h) + pad * 2;
+
+  // Some regions are geographically spread out (Kyushu + far-away Okinawa) so a
+  // "zoom" would actually be wider than the whole country — just show it all then.
+  if (size >= 850) {
+    svg.setAttribute('viewBox', FULL_VIEWBOX);
+    return;
+  }
+
+  const x = box.minX - (size - w) / 2;
+  const y = box.minY - (size - h) / 2;
+  svg.setAttribute('viewBox', `${x} ${y} ${size} ${size}`);
 }
 
 // -------------------------------------------------------------
@@ -579,7 +727,13 @@ function applyRegionFiltering() {
 // -------------------------------------------------------------
 function inspectPrefecture(code) {
   state.selectedCode = code;
-  
+
+  // Count this prefecture toward "しらべた数" the first time its details are viewed
+  if (!state.inspectedPrefectures[code]) {
+    state.inspectedPrefectures[code] = true;
+    saveState();
+  }
+
   // Toggle inspected visual outline class on map SVG
   document.querySelectorAll('.prefecture').forEach(el => {
     if (el.getAttribute('data-code') === code) {
@@ -1193,13 +1347,17 @@ function finishQuiz() {
     VoiceSpeech.speak(`${state.quizQueue.length}問中、${state.quizCorrectCount}問せいかい！がんばったね！`);
   }
 
-  // Update HighScore metrics
+  // Update HighScore metrics (used for unlocking region medals on a perfect run)
   const scoreKey = `${state.mode}-${state.region}`;
   const currentHighScore = state.highScores[scoreKey] || 0;
   if (state.quizCorrectCount > currentHighScore) {
     state.highScores[scoreKey] = state.quizCorrectCount;
   }
-  
+
+  // Remember this finished quiz for the menu's "せいかい数" meter
+  state.lastQuizCorrect = state.quizCorrectCount;
+  state.lastQuizTotal = state.quizQueue.length;
+
   saveState();
 }
 
@@ -1211,16 +1369,17 @@ function restartQuiz() {
 // Main Screen Statistics & Medals Renderer
 // -------------------------------------------------------------
 function renderMainMenuStats() {
-  // Count inspected and checked learning progress
-  const learnedCount = Object.keys(state.learnedPrefectures).length;
-  document.getElementById('stat-learned-count').innerText = `${learnedCount} / 47`;
+  // "しらべた数": prefectures whose details have been viewed at least once
+  const inspectedCount = Object.keys(state.inspectedPrefectures).length;
+  document.getElementById('stat-learned-count').innerText = `${inspectedCount} / 47`;
 
-  // Find overall highest score across any national quizzes
-  const scoreQuizA = state.highScores['quiz-a-all'] || 0;
-  const scoreQuizB = state.highScores['quiz-b-all'] || 0;
-  const scoreQuizC = state.highScores['quiz-c-all'] || 0;
-  const maxScore = Math.max(scoreQuizA, scoreQuizB, scoreQuizC);
-  document.getElementById('stat-high-score').innerText = `${maxScore} / 47`;
+  // Show the result of the most recently played quiz (correct / questions)
+  const lastEl = document.getElementById('stat-high-score');
+  if (state.lastQuizTotal > 0) {
+    lastEl.innerText = `${state.lastQuizCorrect} / ${state.lastQuizTotal}`;
+  } else {
+    lastEl.innerText = 'まだ';
+  }
 
   // Render clear medal stamps cabinet
   const cabinet = document.getElementById('medal-cabinet');
@@ -1228,28 +1387,34 @@ function renderMainMenuStats() {
 
   const medalConfigs = [
     { key: 'medal-all', name: 'ぜんこく', emoji: '👑' },
-    { key: 'medal-hokkaido-tohoku', name: 'きた日本', emoji: '🌸' },
+    { key: 'medal-hokkaido-tohoku', name: 'ほっかいどう・とうほく', label: 'ほっかいどう・<br>とうほく', emoji: '🌸' },
     { key: 'medal-kanto', name: 'かんとう', emoji: '⭐' },
     { key: 'medal-chubu', name: 'ちゅうぶ', emoji: '🌳' },
-    { key: 'medal-kinki', name: 'かんさい', emoji: '🏮' },
-    { key: 'medal-chugoku-shikoku', name: 'ちゅうしこ', emoji: '🍊' },
-    { key: 'medal-kyushu-okinawa', name: 'みなみ日本', emoji: '🌺' }
+    { key: 'medal-kinki', name: 'かんさい', emoji: '🏯' },
+    { key: 'medal-chugoku-shikoku', name: 'ちゅうごく・しこく', label: 'ちゅうごく・<br>しこく', emoji: '🍊' },
+    { key: 'medal-kyushu-okinawa', name: 'きゅうしゅう・おきなわ', label: 'きゅうしゅう・<br>おきなわ', emoji: '🌺' }
   ];
 
   medalConfigs.forEach((cfg) => {
-    const medalEl = document.createElement('div');
     const isUnlocked = !!state.highScores[cfg.key];
-    
+
+    // Each medal is a column: the circle on top, a readable name label below.
+    const item = document.createElement('div');
+    item.className = 'medal-item';
+    // Full explanation on hover (kept accessible, no longer overlapping visually)
+    item.title = isUnlocked ? `合格！「${cfg.name}」` : `${cfg.name} クイズを満点で解放！`;
+
+    const medalEl = document.createElement('div');
     medalEl.className = `medal ${isUnlocked ? 'active' : ''}`;
     medalEl.innerText = isUnlocked ? cfg.emoji : '🔒';
-    
-    // Accessible tooltip text for children explaining how to unlock
-    const tooltipText = isUnlocked 
-      ? `合格！「${cfg.name}」` 
-      : `${cfg.name} クイズを満点で解放！`;
-    medalEl.setAttribute('data-tooltip', tooltipText);
-    
-    cabinet.appendChild(medalEl);
+
+    const label = document.createElement('span');
+    label.className = `medal-label ${isUnlocked ? 'unlocked' : ''}`;
+    label.innerHTML = cfg.label || cfg.name;
+
+    item.appendChild(medalEl);
+    item.appendChild(label);
+    cabinet.appendChild(item);
   });
 }
 

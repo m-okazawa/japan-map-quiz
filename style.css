@@ -389,22 +389,30 @@ rt {
 .medal-cabinet {
   display: flex;
   justify-content: center;
-  gap: 12px;
+  gap: 16px 10px;
   flex-wrap: wrap;
 }
+/* Each medal + its name label form one fixed-width column so labels sit neatly
+   under their own medal and never overlap the neighbouring one. */
+.medal-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 74px;
+}
 .medal {
-  width: 64px;
-  height: 64px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background: #e2e8f0;
   display: flex;
   justify-content: center;
   align-items: center;
   font-size: 28px;
-  position: relative;
-  opacity: 0.3;
+  opacity: 0.35;
   filter: grayscale(100%);
   transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  flex-shrink: 0;
 }
 .medal.active {
   opacity: 1;
@@ -416,18 +424,31 @@ rt {
 .medal.active:hover {
   transform: scale(1.15) rotate(5deg);
 }
-.medal::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: -28px;
-  font-size: 9px;
+/* Readable name label under each medal (dark & solid — no more faint text) */
+.medal-label {
+  margin-top: 7px;
+  font-size: 11px;
   font-weight: 900;
-  color: var(--text-color);
-  white-space: nowrap;
-  opacity: 0.6;
+  line-height: 1.2;
+  text-align: center;
+  color: #94a3b8;            /* locked: muted but still clearly readable */
+  word-break: keep-all;
 }
-.medal.active::after {
-  opacity: 1;
+.medal-label.unlocked {
+  color: var(--text-color);  /* unlocked: full-strength dark text */
+}
+
+/* One-line explanation so kids know what the medals are for */
+.medal-hint {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-light);
+}
+.medal-hint b {
+  color: var(--danger-color);
+  font-weight: 900;
 }
 
 /* Game Layout */
@@ -1405,8 +1426,10 @@ rt {
   .choice-btn { padding: 14px 16px; font-size: 15px; }
   .result-score-big { font-size: 36px; }
 
-  .medal { width: 54px; height: 54px; font-size: 22px; }
-  .medal::after { font-size: 8px; bottom: -24px; }
+  .medal-cabinet { gap: 14px 8px; }
+  .medal-item { width: 64px; }
+  .medal { width: 52px; height: 52px; font-size: 22px; }
+  .medal-label { font-size: 10px; margin-top: 6px; }
 }
 
 /* Very small phones (e.g. 320px wide): a little extra squeeze */
