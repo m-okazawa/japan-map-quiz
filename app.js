@@ -11,6 +11,7 @@ document.head.appendChild(rubyStyle);
 // Preload mascot images to prevent flickering on emotion changes
 const mascotImages = [
   'images/mascot_happy.png',
+  'images/mascot_normal.png',
   'images/mascot_sad.png',
   'images/mascot_success.png'
 ];
@@ -317,14 +318,11 @@ const VoiceSpeech = {
       utterance.voice = jaVoice;
     }
 
-    // High-quality (neural / online) voices stay clear even when pitched up high,
-    // so we can push them to a cute, childlike pitch. Basic/robotic voices distort
-    // and sound "scary" if pitched too high, so we lift them only gently.
-    const isHqVoice = jaVoice && /natural|online|enhanced|premium|google|siri/i.test(jaVoice.name || '');
-
     utterance.lang = 'ja-JP';
-    utterance.rate = isHqVoice ? 1.0 : 0.95;  // light & lively, easy for kids to follow
-    utterance.pitch = isHqVoice ? 1.55 : 1.35; // childlike & cute, without distortion
+    // Keep it a natural, human-sounding voice. Pitching up too much made it sound
+    // unnatural / creepy, so we stay close to a normal speaking pitch & speed.
+    utterance.rate = 1.0;    // normal, natural speaking speed
+    utterance.pitch = 1.05;  // essentially natural, just a touch of warmth
 
     if (onEnd) {
       // Fire on natural end OR on error so the quiz never stalls
@@ -500,7 +498,7 @@ function initUIEvents() {
       delete state.learnedPrefectures[code];
       btnMarkLearned.classList.remove('checked');
       btnMarkLearned.querySelector('.checkbox').innerText = "⬜";
-      updateMascot('mascot-learn-hint', 'mascot-learn-text', 'happy', "もういちど おぼえなおそう！💪🐳");
+      updateMascot('mascot-learn-hint', 'mascot-learn-text', 'normal', "もういちど おぼえなおそう！💪🐳");
     } else {
       state.learnedPrefectures[code] = true;
       btnMarkLearned.classList.add('checked');
@@ -555,23 +553,23 @@ function selectMode(mode) {
     document.querySelector('.info-content-state').style.display = 'none';
     state.selectedCode = null;
     applyRegionFiltering();
-    updateMascot('mascot-learn-empty', null, 'happy', null);
+    updateMascot('mascot-learn-empty', null, 'normal', null);
     VoiceSpeech.speak("ちず を クリック して、しらべて みよう！");
   } else if (mode === 'quiz-a') {
     document.getElementById('quiz-status-bar').classList.add('active');
-    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-status', null, 'normal', null);
     startQuiz();
   } else if (mode === 'quiz-b') {
     document.getElementById('quiz-status-bar').classList.add('active');
     document.getElementById('panel-quiz-choices').classList.add('active');
-    updateMascot('mascot-status', null, 'happy', null);
-    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の名前はなあに？下の4つからえらんでね！🐶");
+    updateMascot('mascot-status', null, 'normal', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'normal', "光（ひか）っている県（けん）の名前はなあに？下の4つからえらんでね！🐶");
     startQuiz();
   } else if (mode === 'quiz-c') {
     document.getElementById('quiz-status-bar').classList.add('active');
     document.getElementById('panel-quiz-choices').classList.add('active');
-    updateMascot('mascot-status', null, 'happy', null);
-    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？下の4つからえらんでね！🐳");
+    updateMascot('mascot-status', null, 'normal', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'normal', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？下の4つからえらんでね！🐳");
     startQuiz();
   }
 }
@@ -819,7 +817,7 @@ function inspectPrefecture(code) {
   VoiceSpeech.speak(`${voiceName}。${voiceFact}`);
 
   // Update learn mode mascot hint
-  updateMascot('mascot-learn-hint', 'mascot-learn-text', 'happy', `「${pref.kana}」についておぼえよう！おぼえたらボタンをおしてね！🐳`);
+  updateMascot('mascot-learn-hint', 'mascot-learn-text', 'normal', `「${pref.kana}」についておぼえよう！おぼえたらボタンをおしてね！🐳`);
 }
 
 // Helper to return Furigana Markup
@@ -990,6 +988,8 @@ function updateMascot(mascotId, bubbleId, emotion, text) {
       mascotEl.src = 'images/mascot_success.png';
     } else if (emotion === 'sad') {
       mascotEl.src = 'images/mascot_sad.png';
+    } else if (emotion === 'normal') {
+      mascotEl.src = 'images/mascot_normal.png';
     }
   }
   if (bubbleEl && text) {
@@ -1063,7 +1063,7 @@ function nextQuizQuestion() {
     document.getElementById('quiz-question-text').innerHTML = textHtml;
     
     // Mascot update
-    updateMascot('mascot-status', null, 'happy', null);
+    updateMascot('mascot-status', null, 'normal', null);
     
     // Voice prompt
     VoiceSpeech.speak(`${targetPref.kana}はどこかな？クリックしてね！`);
@@ -1083,8 +1083,8 @@ function nextQuizQuestion() {
     renderChoices();
     
     // Mascot update
-    updateMascot('mascot-status', null, 'happy', null);
-    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の名前はなあに？<br>下の4つからえらんでね！🐳");
+    updateMascot('mascot-status', null, 'normal', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'normal', "光（ひか）っている県（けん）の名前はなあに？<br>下の4つからえらんでね！🐳");
     
     // Voice prompt
     VoiceSpeech.speak("光っている県はなんという名前かな？選んでね！");
@@ -1104,8 +1104,8 @@ function nextQuizQuestion() {
     renderChoices();
     
     // Mascot update
-    updateMascot('mascot-status', null, 'happy', null);
-    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'happy', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？<br>下の4つからえらんでね！🐳");
+    updateMascot('mascot-status', null, 'normal', null);
+    updateMascot('mascot-quiz-b', 'mascot-quiz-b-text', 'normal', "光（ひか）っている県（けん）の県庁所在地（けんちょうしょざいち）はなあに？<br>下の4つからえらんでね！🐳");
     
     // Voice prompt
     VoiceSpeech.speak("光っている県の県庁所在地はなんという名前かな？選んでね！");
